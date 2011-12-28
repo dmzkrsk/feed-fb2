@@ -7,6 +7,10 @@ import re
 import time
 from urllib2 import urlopen
 from html2fb2 import HtmlToFb
+import logging
+
+_logger = logging.getLogger('feed-fb2.writer')
+_logger.addHandler(logging.NullHandler())
 
 VERSION = '0.1'
 PROGRAM_NAME = 'blogspot2fb v%s' % VERSION
@@ -51,7 +55,10 @@ class BloggerToBook(object):
         @type genre: list
         @type lang: str
         """
+        _logger.debug('Parsing stream')
         tree = TreeWrapper(etree.parse(stream))
+
+        _logger.debug('Preparing header')
 
         self.book = etree.Element("FictionBook", nsmap=self.NSMAP)
 
@@ -112,12 +119,15 @@ class BloggerToBook(object):
             )
         )
 
+        _logger.debug('Parsing entries')
+
         for entry in reversed(tree.xpath('/a:feed/a:entry')):
             entry = TreeWrapper(entry)
             title = entry.xpath_value('./a:title/text()')
             published = entry.xpath_date('./a:published/text()')
 
             content = entry.xpath_value('./a:content/text()')
+            _logger.debug('%s %d bytes long' % (title, len(content)))
             content = etree.HTML(content)
 
             section = self._e('section', None,
@@ -134,6 +144,7 @@ class BloggerToBook(object):
             body.append(section)
 
         self.book.append(body)
+        _logger.debug('Book parsed')
 
     def _e(self, tag, content, *children, **attrib):
         e = etree.Element(tag, attrib)
@@ -156,29 +167,52 @@ class BloggerToBook(object):
 if __name__ == '__main__':
     import sys
     import optparse
+    import logging
 
     parser = optparse.OptionParser()
     parser.add_option("-g", "--genre", action="append", dest='genre', default=[], help='fb2.1 genre list')
     parser.add_option("-l", "--lang", action="store", dest='lang', default='en', help='book language')
+
+    log = logging.getLogger('feed-fb2')
+    frmttr = logging.Formatter('%(asctime)s %(name)s %(levelname)s %(message)s', '%Y-%m-%d %H:%M:%S')
+    shdlr = logging.StreamHandler(sys.stderr)
+    shdlr.setFormatter(frmttr)
+    log.addHandler(shdlr)
+    log.setLevel(logging.DEBUG)
 
     options, args = parser.parse_args()
     if not options.genre:
         options.genre = ['ref_ref']
 
     if os.path.exists(args[0]):
+        log.info('Reading local file: %s' % args[0])
         stream = open(args[0])
     else:
         source, name = args[0].split(':', 1)
         if source == 'blogspot':
+            log.info('Loading %s from blogspot' % name)
             url = 'http://%s.blogspot.com/feeds/posts/default/?max-results=0' % name
+            log.info('Retirieving number of results')
             tree = etree.parse(urlopen(url))
             results = int(tree.xpath('/a:feed/s:totalResults/text()', namespaces=NSFEED)[0])
+            log.info('%d items found' % results)
+            log.info('Retirieving items')
             url = 'http://%s.blogspot.com/feeds/posts/default/?max-results=%d' % (name, results)
             stream = urlopen(url)
         else:
+            log.error('Invalid command: %s' % source)
             stream = open(args[0])
 
+    log.info('Parsing')
     b2b = BloggerToBook(stream, **options.__dict__)
-    o = sys.stdout if args[1] == '-' else open(args[1], 'wb')
+    if args[1] == '-':
+        o = sys.stdout
+        log.info('Book dumped into STDOUT')
+    else:
+        o = open(args[1], 'wb')
+        log.info('Book saved into %s' % args[1])
+
     b2b.write(o)
     o.close()
+
+    log.info('Done')
