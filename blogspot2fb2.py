@@ -1,16 +1,22 @@
 from datetime import datetime
 import getpass
 from lxml import etree
+import os
 from dateutil.parser import parse
 import re
 import time
+from urllib2 import urlopen
 from html2fb2 import HtmlToFb
 
 VERSION = '0.1'
 PROGRAM_NAME = 'blogspot2fb v%s' % VERSION
 
+NSFEED = {
+    'a': 'http://www.w3.org/2005/Atom',
+    's': 'http://a9.com/-/spec/opensearchrss/1.0/',
+}
+
 class TreeWrapper(object):
-    NSATOM = {'a': 'http://www.w3.org/2005/Atom'}
 
     def __init__(self, tree):
         """
@@ -19,10 +25,10 @@ class TreeWrapper(object):
         self.tree = tree
 
     def xpath(self, path):
-        return self.tree.xpath(path, namespaces=self.NSATOM)
+        return self.tree.xpath(path, namespaces=NSFEED)
 
     def xpath_value(self, path):
-        return self.tree.xpath(path, namespaces=self.NSATOM)[0]
+        return self.tree.xpath(path, namespaces=NSFEED)[0]
 
     def xpath_date(self, path):
         """
@@ -159,7 +165,20 @@ if __name__ == '__main__':
     if not options.genre:
         options.genre = ['ref_ref']
 
-    b2b = BloggerToBook(open(args[0]), **options.__dict__)
+    if os.path.exists(args[0]):
+        stream = open(args[0])
+    else:
+        source, name = args[0].split(':', 1)
+        if source == 'blogspot':
+            url = 'http://%s.blogspot.com/feeds/posts/default/?max-results=0' % name
+            tree = etree.parse(urlopen(url))
+            results = int(tree.xpath('/a:feed/s:totalResults/text()', namespaces=NSFEED)[0])
+            url = 'http://%s.blogspot.com/feeds/posts/default/?max-results=%d' % (name, results)
+            stream = urlopen(url)
+        else:
+            stream = open(args[0])
+
+    b2b = BloggerToBook(stream, **options.__dict__)
     o = sys.stdout if args[1] == '-' else open(args[1], 'wb')
     b2b.write(o)
     o.close()
